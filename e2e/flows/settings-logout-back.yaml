@@ -1,0 +1,27 @@
+# Logout, then sign back in as the existing user. Back from the Dashboard leaves the app instead of
+# returning to Signup, because Signup clears the whole back stack when it goes to the Dashboard.
+appId: org.greenstand.android.TreeTracker.debug
+name: Logout then back exits the app
+tags: [settings]
+---
+- launchApp: {clearState: true}
+- runFlow:
+    file: subflows/signup.yaml
+    env: {CREDENTIAL: Phone, IDENTIFIER: "5551230001", FIRST_NAME: Ada, LAST_NAME: Admin}
+- tapOn: {id: SettingsButton}
+- tapOn: {id: SettingsLogout}
+- tapOn: {id: DialogPositiveButton}
+- tapOn: {id: PrivacyPolicyCloseButton}
+- tapOn: {id: PhoneField}
+- inputText: "5551230001"
+- hideKeyboard
+- tapOn: {id: ArrowForwardButton}
+- tapOn: {id: ExistingUserButton}
+- extendedWaitUntil:
+    visible: {id: TrackButton}
+    timeout: 15000
+- back
+# The app is gone, neither the Dashboard nor Signup is showing.
+- assertNotVisible: {id: TrackButton}
+- assertNotVisible: {id: ExistingUserButton}
+- assertNotVisible: {id: PhoneField}

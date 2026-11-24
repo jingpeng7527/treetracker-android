@@ -16,6 +16,7 @@
 package org.greenstand.android.TreeTracker.userselect
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.greenstand.android.TreeTracker.models.user.User
 import org.greenstand.android.TreeTracker.navigation.DashboardRoute
+import org.greenstand.android.TreeTracker.navigation.rememberDoubleTapGuard
 import org.greenstand.android.TreeTracker.navigation.SignupFlowRoute
 import org.greenstand.android.TreeTracker.navigation.LocalNavigator
 import org.greenstand.android.TreeTracker.root.LocalViewModelFactory
@@ -44,7 +46,6 @@ import org.greenstand.android.TreeTracker.view.DepthButtonColors
 import org.greenstand.android.TreeTracker.view.OrangeAddButton
 import org.greenstand.android.TreeTracker.view.UserButton
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun UserSelect(
     navigationButtonColors: DepthButtonColors,
@@ -52,12 +53,60 @@ fun UserSelect(
     isNotificationEnabled: Boolean,
     isFromSettings: Boolean = false,
     selectedColor: Color = AppColors.Green,
+    viewModel: UserSelectViewModel = viewModel(factory = LocalViewModelFactory.current),
     onNavigateForward: (User) -> Unit,
 ) {
-    val viewModel: UserSelectViewModel = viewModel(factory = LocalViewModelFactory.current)
     val navigator = LocalNavigator.current
     val state by viewModel.state.collectAsState(UserSelectState())
+    val doubleTapGuard = rememberDoubleTapGuard()
 
+    Box(doubleTapGuard.modifier) {
+        UserSelectContent(
+            state = state,
+            navigationButtonColors = navigationButtonColors,
+            isCreateUserEnabled = isCreateUserEnabled,
+            isNotificationEnabled = isNotificationEnabled,
+            selectedColor = selectedColor,
+            onUserClicked = { user -> viewModel.handleAction(UserSelectAction.SelectUser(user)) },
+            onCreateUserClicked = {
+                // On small screens the add-user button sits where Dashboard's Track button was, so
+                // the second tap of a double tap on Track lands here (#1423). Drop it.
+                if (!doubleTapGuard.isSecondTapOfDoubleTap(navigator)) {
+                    navigator.throttledNavigate(SignupFlowRoute)
+                }
+            },
+            onBackClicked = {
+                if (!isFromSettings) {
+                    navigator.throttledNavigate(DashboardRoute) {
+                        popUpTo<DashboardRoute> { inclusive = true }
+                        launchSingleTop = true
+                    }
+                } else {
+                    navigator.throttledPopBackStack()
+                }
+            },
+            onNavigateForward = onNavigateForward,
+        )
+    }
+}
+
+/**
+ * Stateless user grid shared by every "pick a planter" screen. [onNavigateForward] is only
+ * called with the selected user, while one is selected.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun UserSelectContent(
+    state: UserSelectState,
+    navigationButtonColors: DepthButtonColors,
+    isCreateUserEnabled: Boolean,
+    isNotificationEnabled: Boolean,
+    selectedColor: Color = AppColors.Green,
+    onUserClicked: (User) -> Unit = {},
+    onCreateUserClicked: () -> Unit = {},
+    onBackClicked: () -> Unit = {},
+    onNavigateForward: (User) -> Unit = {},
+) {
     Scaffold(
         bottomBar = {
             ActionBar(
@@ -66,7 +115,7 @@ fun UserSelect(
                     if (isCreateUserEnabled) {
                         OrangeAddButton(
                             modifier = Modifier.align(Alignment.Center),
-                            onClick = { navigator.throttledNavigate(SignupFlowRoute) },
+                            onClick = onCreateUserClicked,
                         )
                     }
                 },
@@ -86,16 +135,7 @@ fun UserSelect(
                     ArrowButton(
                         isLeft = true,
                         colors = navigationButtonColors,
-                        onClick = {
-                            if (!isFromSettings) {
-                                navigator.throttledNavigate(DashboardRoute) {
-                                    popUpTo<DashboardRoute> { inclusive = true }
-                                    launchSingleTop = true
-                                }
-                            } else {
-                                navigator.throttledPopBackStack()
-                            }
-                        },
+                        onClick = onBackClicked,
                     )
                 },
             )
@@ -112,7 +152,7 @@ fun UserSelect(
                     isSelected = state.selectedUser?.id == user.id,
                     buttonColors = AppButtonColors.Default,
                     selectedColor = selectedColor,
-                    onClick = { viewModel.handleAction(UserSelectAction.SelectUser(user)) },
+                    onClick = { onUserClicked(user) },
                     isNotificationEnabled = isNotificationEnabled && user.unreadMessagesAvailable,
                 )
             }

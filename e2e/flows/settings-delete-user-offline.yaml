@@ -1,0 +1,54 @@
+# Deleting a user while offline. Signs up Ada, adds Bob, then deletes Bob from Settings with the
+# device offline (airplane mode on, as e2e/run.sh does). The message sync that follows the delete
+# can't reach the server; the app must stay up, show the "Account Deleted" dialog, and return to
+# Settings when it's closed, with Bob gone from the list. Regression check for #1416. The same
+# guarded sync runs when deleting the admin; settings-delete-admin.yaml checks that path.
+appId: org.greenstand.android.TreeTracker.debug
+name: Delete user offline
+tags: [settings]
+---
+- launchApp: {clearState: true}
+- runFlow:
+    file: subflows/signup.yaml
+    env: {CREDENTIAL: Phone, IDENTIFIER: "5551230001", FIRST_NAME: Ada, LAST_NAME: Admin}
+# Add a second user, Bob, who is not the admin.
+- tapOn: {id: TrackButton}
+- tapOn: {id: OrangeAddButton}
+- tapOn: {id: PrivacyPolicyCloseButton}
+- tapOn: {id: PhoneField}
+- inputText: "5551230002"
+- hideKeyboard
+- tapOn: {id: ArrowForwardButton}
+- tapOn: {id: FirstNameField}
+- inputText: Bob
+- tapOn: {id: LastNameField}
+- inputText: Builder
+- hideKeyboard
+- tapOn: {id: ArrowForwardButton}
+- tapOn: {id: CaptureButton}
+- tapOn: {id: ApproveButton}
+- extendedWaitUntil:
+    visible: {id: OrgNameField}
+    timeout: 15000
+- back
+- back
+- extendedWaitUntil:
+    visible: {id: SettingsButton}
+    timeout: 15000
+# Delete Bob.
+- tapOn: {id: SettingsButton}
+- tapOn: {id: SettingsDeleteAccount}
+- tapOn: {id: "UserButton_5551230002"}
+- tapOn: {id: ArrowForwardButton}
+- tapOn: {id: DialogPositiveButton}
+# The app stays up, shows "Account Deleted" (the confirm dialog uses the same DialogTitle tag, so
+# match the text), and closing it returns to Settings.
+- extendedWaitUntil:
+    visible: {id: DialogTitle, text: "Account Deleted"}
+    timeout: 10000
+- tapOn: {id: DialogPositiveButton}
+- assertVisible: {id: SettingsDeleteAccount}
+# The failed sync can surface late, so keep using the app: Bob is gone and Ada is still there.
+- tapOn: {id: SettingsDeleteAccount}
+- assertVisible: {id: "UserButton_5551230001"}
+- assertNotVisible: {id: "UserButton_5551230002"}

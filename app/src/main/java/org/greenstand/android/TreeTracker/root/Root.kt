@@ -36,14 +36,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import androidx.navigation3.runtime.NavKey
 import org.greenstand.android.TreeTracker.models.TreeTrackerViewModelFactory
 import org.greenstand.android.TreeTracker.models.organization.OrgRepo
 import org.greenstand.android.TreeTracker.navigation.SplashRoute
 import org.greenstand.android.TreeTracker.splash.Splash
 import org.greenstand.android.TreeTracker.theme.CustomTheme
 import org.greenstand.android.TreeTracker.view.AppColors
+import org.greenstand.android.TreeTracker.view.TestTags
+import org.greenstand.android.TreeTracker.view.exposeTestTags
 import org.greenstand.android.TreeTracker.viewmodel.LocalSnackbarController
 import org.greenstand.android.TreeTracker.viewmodel.SnackbarController
 import org.greenstand.android.TreeTracker.viewmodel.resolve
@@ -56,6 +60,7 @@ val LocalViewModelFactory = compositionLocalOf<TreeTrackerViewModelFactory> { er
 fun Root(
     viewModelFactory: TreeTrackerViewModelFactory,
     startRoute: SplashRoute = SplashRoute(),
+    initialBackStack: List<NavKey> = listOf(startRoute),
 ) {
     val snackbarController = remember { SnackbarController() }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -91,9 +96,9 @@ fun Root(
         LocalViewModelFactory provides viewModelFactory,
         LocalSnackbarController provides snackbarController,
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize().exposeTestTags()) {
             if (isOrgReady) {
-                Host(startRoute)
+                Host(startRoute, initialBackStack)
             } else {
                 Splash()
             }
@@ -107,6 +112,7 @@ fun Root(
                         .wrapContentHeight(Alignment.Bottom),
             ) { data ->
                 Snackbar(
+                    modifier = Modifier.testTag(TestTags.SNACKBAR),
                     contentColor = CustomTheme.textColors.darkText,
                     backgroundColor = AppColors.Green,
                 ) {

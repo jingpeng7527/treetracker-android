@@ -18,6 +18,7 @@ package org.greenstand.android.TreeTracker.orgpicker
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
 import org.greenstand.android.TreeTracker.models.organization.OrgRepo
+import org.greenstand.android.TreeTracker.models.setupflow.CaptureSetupRestorer
 import org.greenstand.android.TreeTracker.models.setupflow.CaptureSetupScopeManager
 import org.greenstand.android.TreeTracker.preferences.PrefKey
 import org.greenstand.android.TreeTracker.preferences.PrefKeys
@@ -29,6 +30,10 @@ data class AddOrgState(
     val orgName: String = "",
     val previousOrgName: String? = null,
     val userImagePath: String = "",
+    /** True while Add org, restored after process death, reloads its setup user. Next and Back wait. */
+    val restoring: Boolean = false,
+    /** True when Add org came back after process death and its user could not be found again. */
+    val setupLost: Boolean = false,
 )
 
 sealed class AddOrgAction : Action {
@@ -48,9 +53,18 @@ sealed class AddOrgAction : Action {
 class AddOrgViewModel(
     private val preferences: Preferences,
     private val orgRepo: OrgRepo,
+    setupRestorer: CaptureSetupRestorer,
 ) : BaseViewModel<AddOrgState, AddOrgAction>(AddOrgState()) {
     init {
+        // After process death Nav3 restores Add org with the capture setup scope closed.
+        val restoring = setupRestorer.reopenIfClosed()
+        if (restoring) updateState { copy(restoring = true) }
         viewModelScope.launch {
+            val user = setupRestorer.loadUser(restoring)
+            if (user == null) {
+                updateState { copy(restoring = false, setupLost = true) }
+                return@launch
+            }
             val currentOrgName =
                 orgRepo
                     .currentOrg()
@@ -58,7 +72,8 @@ class AddOrgViewModel(
                     .takeIf { it.isNotBlank() && it != "Greenstand" }
             updateState {
                 copy(
-                    userImagePath = CaptureSetupScopeManager.getData().user!!.photoPath,
+                    restoring = false,
+                    userImagePath = user.photoPath,
                     previousOrgName = preferences.getString(PREV_ORG_KEY),
                     orgName = currentOrgName ?: "",
                 )
@@ -70,6 +85,8 @@ class AddOrgViewModel(
     }
 
     override fun handleAction(action: AddOrgAction) {
+        // The setup scope is closed once setup is lost; the screen is on its way to the Dashboard.
+        if (currentState.setupLost) return
         when (action) {
             is AddOrgAction.UpdateOrgName -> {
                 CaptureSetupScopeManager.getData().organizationName = action.orgName

@@ -1,0 +1,36 @@
+# E6: logout. Cancel keeps the user signed in. Confirming goes to Signup. Signing in again with the
+# existing identifier reaches the Dashboard, and back from there exits the app.
+appId: org.greenstand.android.TreeTracker.debug
+name: E6 Logout
+tags: [settings]
+---
+- launchApp: {clearState: true}
+- runFlow:
+    file: subflows/signup.yaml
+    env: {CREDENTIAL: Phone, IDENTIFIER: "5551230001", FIRST_NAME: Ada, LAST_NAME: Admin}
+- tapOn: {id: SettingsButton}
+- tapOn: {id: SettingsLogout}
+- assertVisible: {id: DialogUserButton}
+- tapOn: {id: DialogNegativeButton}
+- assertNotVisible: {id: DialogTitle}
+- assertVisible: {id: SettingsLogout}
+- tapOn: {id: SettingsLogout}
+- tapOn: {id: DialogPositiveButton}
+# Signup opens with the privacy policy dialog over the credential step.
+- tapOn: {id: PrivacyPolicyCloseButton}
+- assertVisible: {id: PhoneField}
+- assertNotVisible: {id: TrackButton}
+- assertNotVisible: {id: SettingsButton}
+# Sign back in with the existing identifier.
+- tapOn: {id: PhoneField}
+- inputText: "5551230001"
+- hideKeyboard
+- tapOn: {id: ArrowForwardButton}
+- tapOn: {id: ExistingUserButton}
+- extendedWaitUntil:
+    visible: {id: TrackButton}
+    timeout: 15000
+# Back from the Dashboard after signing in again exits the app.
+- back
+- assertNotVisible: {id: TrackButton}
+- assertNotVisible: {id: ExistingUserButton}

@@ -15,10 +15,10 @@
  */
 package org.greenstand.android.TreeTracker.camera
 
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -48,6 +48,42 @@ fun SelfieScreen() {
     val viewModel = getViewModel<SignupViewModel>()
     val state by viewModel.state.collectAsState()
 
+    Selfie(
+        showSelfieTutorial = state.showSelfieTutorial == true,
+        onInfoClicked = {
+            viewModel.handleAction(SignupAction.UpdateSelfieTutorialDialog(true))
+        },
+        onCaptureClicked = {
+            cameraControl.captureImage()
+        },
+        onTutorialCompleted = {
+            viewModel.handleAction(SignupAction.UpdateSelfieTutorialDialog(false))
+        },
+        cameraPreview = { modifier ->
+            Camera(
+                isSelfieMode = true,
+                cameraControl = cameraControl,
+                modifier = modifier,
+                onImageCaptured = {
+                    navigator.navigate(ImageReviewRoute(photoPath = it.path))
+                },
+            )
+        },
+    )
+}
+
+/**
+ * Stateless selfie UI. The camera preview is a slot ([cameraPreview]) so the screen can be
+ * rendered without CameraX; it receives the modifier that sizes the preview.
+ */
+@Composable
+fun Selfie(
+    showSelfieTutorial: Boolean,
+    onInfoClicked: () -> Unit = {},
+    onCaptureClicked: () -> Unit = {},
+    onTutorialCompleted: () -> Unit = {},
+    cameraPreview: @Composable (Modifier) -> Unit = {},
+) {
     Scaffold(
         topBar = {
             ActionBar(
@@ -63,35 +99,25 @@ fun SelfieScreen() {
                 rightAction = {
                     InfoButton(
                         modifier = Modifier.align(Alignment.Center),
-                        onClick = {
-                            viewModel.handleAction(SignupAction.UpdateSelfieTutorialDialog(true))
-                        },
+                        onClick = onInfoClicked,
                     )
                 },
                 centerAction = {
                     CaptureButton(
                         modifier = Modifier.align(Alignment.Center),
-                        onClick = {
-                            cameraControl.captureImage()
-                        },
+                        onClick = onCaptureClicked,
                         isEnabled = true,
                     )
                 },
             )
         },
     ) { padding ->
-        Camera(
-            isSelfieMode = true,
-            cameraControl = cameraControl,
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(padding)
-                    .aspectRatio(1.0f),
-            onImageCaptured = {
-                navigator.navigate(ImageReviewRoute(photoPath = it.path))
-            },
-        )
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            cameraPreview(Modifier.size(minOf(maxWidth, maxHeight)))
+        }
         Box(
             modifier =
                 Modifier
@@ -100,11 +126,9 @@ fun SelfieScreen() {
                     .padding(bottom = 10.dp),
             contentAlignment = Alignment.BottomCenter,
         ) {
-            if (state.showSelfieTutorial == true) {
+            if (showSelfieTutorial) {
                 SelfieTutorial(
-                    onCompleteClick = {
-                        viewModel.handleAction(SignupAction.UpdateSelfieTutorialDialog(false))
-                    },
+                    onCompleteClick = onTutorialCompleted,
                 )
             }
         }

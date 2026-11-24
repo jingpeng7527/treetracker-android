@@ -31,6 +31,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.greenstand.android.TreeTracker.navigation.Navigator
@@ -43,6 +44,7 @@ import org.greenstand.android.TreeTracker.navigation.LanguageRoute
 import org.greenstand.android.TreeTracker.navigation.SplashRoute
 import org.greenstand.android.TreeTracker.navigation.LocalNavigator
 import org.greenstand.android.TreeTracker.view.AppColors
+import org.greenstand.android.TreeTracker.view.TestTags
 import timber.log.Timber
 
 @Composable
@@ -73,20 +75,22 @@ fun SplashScreen(
         rememberLauncherForActivityResult(
             contract = ActivityResultContracts.RequestMultiplePermissions(),
             onResult = { result ->
+                // Move on whatever the user answered: a denied permission must not leave the app
+                // on the splash image. Screens that need location (capture) ask for it again.
                 scope.launch {
-                    if (isLocationPermissionGranted(result)) {
-                        Timber.tag("BuildVariant").d("build variant: ${BuildConfig.BUILD_TYPE}")
+                    Timber.tag("BuildVariant").d("build variant: ${BuildConfig.BUILD_TYPE}")
 
-                        viewModel.bootstrap()
+                    viewModel.bootstrap()
 
-                        delay(1000)
+                    delay(1000)
 
-                        if (viewModel.isInitialSetupRequired()) {
+                    if (viewModel.isInitialSetupRequired()) {
+                        if (isLocationPermissionGranted(result)) {
                             viewModel.handleAction(SplashAction.StartGPSUpdatesForSignup)
-                            navigateToLanguageScreen(navigator)
-                        } else {
-                            navigateToDashboardScreen(navigator)
                         }
+                        navigateToLanguageScreen(navigator)
+                    } else {
+                        navigateToDashboardScreen(navigator)
                     }
                 }
             },
@@ -113,14 +117,15 @@ fun Splash() {
             painter = painterResource(id = R.drawable.splash),
             contentDescription = null,
             contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().testTag(TestTags.SPLASH),
         )
     } else {
         Box(
             modifier =
                 Modifier
                     .fillMaxSize()
-                    .background(AppColors.Gray),
+                    .background(AppColors.Gray)
+                    .testTag(TestTags.SPLASH),
         )
     }
 }

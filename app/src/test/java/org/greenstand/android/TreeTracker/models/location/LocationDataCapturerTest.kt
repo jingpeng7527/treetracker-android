@@ -21,25 +21,33 @@ import androidx.arch.core.executor.testing.InstantTaskExecutorRule
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.Observer
+import io.mockk.CapturingSlot
 import io.mockk.MockKAnnotations
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.impl.annotations.MockK
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
 import org.greenstand.android.TreeTracker.database.TreeTrackerDAO
+import org.greenstand.android.TreeTracker.database.entity.LocationEntity
 import org.greenstand.android.TreeTracker.models.ConvergenceConfiguration
+import org.greenstand.android.TreeTracker.models.ConvergenceStatus
+import org.greenstand.android.TreeTracker.models.LocationData
 import org.greenstand.android.TreeTracker.models.LocationDataConfig
 import org.greenstand.android.TreeTracker.models.SessionTracker
 import org.greenstand.android.TreeTracker.preferences.Preferences
 import org.greenstand.android.TreeTracker.utilities.TimeProvider
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -77,6 +85,7 @@ class LocationDataCapturerTest {
         MockKAnnotations.init(this)
         preferences = Preferences(sharedPreferences)
         every { convergenceConfiguration.locationDataConfig } returns LocationDataConfig()
+        every { locationUpdateManager.startLocationUpdates() } returns true
         locationDataCapturer =
             LocationDataCapturer(
                 locationUpdateManager,
@@ -253,4 +262,284 @@ class LocationDataCapturerTest {
             locationDataCapturer.isConvergenceWithinRange(),
         )
     }
+
+    /**
+     * Waits for the location the capturer saves on its background coroutine. coVerify can see the
+     * call before the capture() matcher fills the slot, so wait on the slot itself.
+     */
+    private fun awaitCaptured(slot: CapturingSlot<LocationEntity>) {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (!slot.isCaptured && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10)
+        }
+        assertTrue("no location was saved", slot.isCaptured)
+    }
+
+    private fun startCapturing(): MutableLiveData<Location?> {
+        val locationsLiveData = MutableLiveData<Location?>()
+        every { locationUpdateManager.locationUpdateLiveData } returns locationsLiveData
+        locationDataCapturer.startGpsUpdates()
+        locationDataCapturer.turnOnTreeCaptureMode()
+        return locationsLiveData
+    }
+
+    private fun MutableLiveData<Location?>.postLocations(values: List<Pair<Double, Double>>) {
+        values.forEach { (longitude, latitude) ->
+            val location = mockk<Location>(relaxed = true)
+            every { location.longitude } returns longitude
+            every { location.latitude } returns latitude
+            postValue(location)
+        }
+    }
+
+    @Test(expected = IllegalStateException::class)
+    fun `convergence outside of tree capture mode throws`() {
+        locationDataCapturer.convergence()
+    }
+
+    @Test
+    fun `no coordinates are available before any convergence`() {
+        assertFalse(locationDataCapturer.isLocationCoordinateAvailable())
+    }
+
+    @Test
+    fun `WHEN converged THEN coordinates are available from the converged window`() {
+        startCapturing().postLocations(locationValuesLowVariance)
+
+        assertTrue(locationDataCapturer.isLocationCoordinateAvailable())
+        assertNotNull(locationDataCapturer.lastConvergenceWithinRange)
+        assertSame(locationDataCapturer.lastConvergenceWithinRange, locationDataCapturer.convergence())
+    }
+
+    @Test
+    fun `WHEN not converged THEN convergence falls back to the current window`() {
+        startCapturing().postLocations(locationValuesHighVariance)
+
+        assertTrue(locationDataCapturer.isLocationCoordinateAvailable())
+        assertNull(locationDataCapturer.lastConvergenceWithinRange)
+        assertSame(locationDataCapturer.currentConvergence, locationDataCapturer.convergence())
+    }
+
+    @Test
+    fun `locations outside of tree capture mode do not build a convergence`() {
+        val locationsLiveData = MutableLiveData<Location?>()
+        every { locationUpdateManager.locationUpdateLiveData } returns locationsLiveData
+        locationDataCapturer.startGpsUpdates()
+
+        locationsLiveData.postLocations(locationValuesLowVariance)
+
+        assertNull(locationDataCapturer.currentConvergence)
+        assertFalse(locationDataCapturer.isConvergenceWithinRange())
+    }
+
+    @Test
+    fun `null locations are ignored`() {
+        val locationsLiveData = startCapturing()
+
+        locationsLiveData.postValue(null)
+
+        assertNull(locationDataCapturer.currentConvergence)
+        verify(exactly = 0) { sessionTracker.currentSessionId }
+    }
+
+    @Test
+    fun `turnOffTreeCaptureMode clears the convergence`() {
+        startCapturing().postLocations(locationValuesLowVariance)
+
+        locationDataCapturer.turnOffTreeCaptureMode()
+
+        assertNull(locationDataCapturer.currentConvergence)
+        assertNull(locationDataCapturer.lastConvergenceWithinRange)
+        assertFalse(locationDataCapturer.isLocationCoordinateAvailable())
+        assertFalse(locationDataCapturer.isConvergenceWithinRange())
+    }
+
+    @Test
+    fun `turnOffTreeCaptureMode drops the collected locations`() {
+        val locationsLiveData = startCapturing()
+        locationsLiveData.postLocations(locationValuesLowVariance.take(4))
+        locationDataCapturer.turnOffTreeCaptureMode()
+        locationDataCapturer.turnOnTreeCaptureMode()
+
+        locationsLiveData.postLocations(locationValuesLowVariance.take(4))
+
+        assertNull(locationDataCapturer.currentConvergence)
+    }
+
+    @Test
+    fun `turnOnTreeCaptureMode resets the status to not converged`() {
+        startCapturing().postLocations(locationValuesLowVariance)
+        assertTrue(locationDataCapturer.isConvergenceWithinRange())
+
+        locationDataCapturer.turnOnTreeCaptureMode()
+
+        assertFalse(locationDataCapturer.isConvergenceWithinRange())
+    }
+
+    @Test
+    fun `turnOnTreeCaptureMode generates a new tree uuid each time`() {
+        locationDataCapturer.turnOnTreeCaptureMode()
+        val first = locationDataCapturer.generatedTreeUuid
+
+        locationDataCapturer.turnOnTreeCaptureMode()
+
+        assertTrue(first != locationDataCapturer.generatedTreeUuid)
+    }
+
+    @Test
+    fun `startGpsUpdates only starts location updates once`() {
+        every { locationUpdateManager.locationUpdateLiveData } returns MutableLiveData()
+
+        locationDataCapturer.startGpsUpdates()
+        locationDataCapturer.startGpsUpdates()
+
+        verify(exactly = 1) { locationUpdateManager.startLocationUpdates() }
+    }
+
+    @Test
+    fun `WHEN location permission is missing THEN updates stay off and start once it is granted`() {
+        val locationsLiveData = MutableLiveData<Location?>()
+        every { locationUpdateManager.locationUpdateLiveData } returns locationsLiveData
+        every { locationUpdateManager.startLocationUpdates() } returns false
+
+        locationDataCapturer.startGpsUpdates()
+
+        assertFalse(locationsLiveData.hasObservers())
+
+        every { locationUpdateManager.startLocationUpdates() } returns true
+        locationDataCapturer.startGpsUpdates()
+
+        assertTrue(locationsLiveData.hasObservers())
+        verify(exactly = 2) { locationUpdateManager.startLocationUpdates() }
+    }
+
+    @Test
+    fun `stopGpsUpdates without starting does nothing`() {
+        locationDataCapturer.stopGpsUpdates()
+
+        verify(exactly = 0) { locationUpdateManager.stopLocationUpdates() }
+    }
+
+    @Test
+    fun `stopGpsUpdates removes the observer and stops location updates`() {
+        val locationsLiveData = MutableLiveData<Location?>()
+        every { locationUpdateManager.locationUpdateLiveData } returns locationsLiveData
+        locationDataCapturer.startGpsUpdates()
+
+        locationDataCapturer.stopGpsUpdates()
+
+        assertFalse(locationsLiveData.hasObservers())
+        verify(exactly = 1) { locationUpdateManager.stopLocationUpdates() }
+    }
+
+    @Test
+    fun `GPS updates can be restarted after stopping`() {
+        every { locationUpdateManager.locationUpdateLiveData } returns MutableLiveData()
+        locationDataCapturer.startGpsUpdates()
+        locationDataCapturer.stopGpsUpdates()
+
+        locationDataCapturer.startGpsUpdates()
+
+        verify(exactly = 2) { locationUpdateManager.startLocationUpdates() }
+    }
+
+    @Test
+    fun `percentage observers are only notified when the percentage increases`() {
+        val received = mutableListOf<Float>()
+        locationDataCapturer.percentageConvergenceObservers.add { received.add(it) }
+
+        locationDataCapturer.newestPercentageConvergence = 0.5f
+        locationDataCapturer.newestPercentageConvergence = 0.3f
+        locationDataCapturer.newestPercentageConvergence = 0.8f
+
+        assertEquals(listOf(0.5f, 0.8f), received)
+        assertEquals(0.8f, locationDataCapturer.newestPercentageConvergence, 0f)
+    }
+
+    @Test
+    fun `converged locations report full convergence percentage`() {
+        val received = mutableListOf<Float>()
+        locationDataCapturer.percentageConvergenceObservers.add { received.add(it) }
+
+        startCapturing().postLocations(locationValuesLowVariance)
+
+        assertEquals(listOf(1f), received)
+    }
+
+    @Test
+    fun `unconverged locations report a partial convergence percentage`() {
+        startCapturing().postLocations(locationValuesHighVariance)
+
+        val percentage = locationDataCapturer.newestPercentageConvergence
+        assertTrue(percentage > 0f)
+        assertTrue(percentage < 1f)
+    }
+
+    @Test
+    fun `WHEN a session is active THEN each location is saved for that session`() {
+        every { sessionTracker.currentSessionId } returns 5L
+        every { timeProvider.currentTime() } returns Instant.fromEpochMilliseconds(1000)
+        val savedLocation = slot<LocationEntity>()
+        coEvery { treeTrackerDAO.insertLocationData(capture(savedLocation)) } returns 1L
+        val locationsLiveData = startCapturing()
+        val location = mockk<Location>(relaxed = true)
+        every { location.latitude } returns 1.0
+        every { location.longitude } returns 2.0
+        every { location.accuracy } returns 3f
+
+        locationsLiveData.postValue(location)
+
+        awaitCaptured(savedLocation)
+        assertEquals(5L, savedLocation.captured.sessionId)
+        assertEquals(
+            LocationData(
+                planterCheckInId = 5L,
+                latitude = 1.0,
+                longitude = 2.0,
+                accuracy = 3f,
+                treeUuid = locationDataCapturer.generatedTreeUuid.toString(),
+                convergenceStatus = ConvergenceStatus.NOT_CONVERGED,
+                capturedAt = Instant.fromEpochMilliseconds(1000).toString(),
+            ),
+            Json.decodeFromString(LocationData.serializer(), savedLocation.captured.locationDataJson),
+        )
+    }
+
+    @Test
+    fun `WHEN no session is active THEN locations are not saved`() {
+        every { sessionTracker.currentSessionId } returns null
+        val locationsLiveData = startCapturing()
+
+        locationsLiveData.postValue(mockk<Location>(relaxed = true))
+
+        coVerify(exactly = 0) { treeTrackerDAO.insertLocationData(any()) }
+    }
+
+    @Test
+    fun `WHEN already converged THEN converge keeps the converged status`() =
+        runTest {
+            startCapturing().postLocations(locationValuesLowVariance)
+
+            locationDataCapturer.converge()
+
+            assertTrue(locationDataCapturer.isConvergenceWithinRange())
+        }
+
+    @Test
+    fun `WHEN convergence times out THEN the status is timed out`() =
+        runTest {
+            every { sessionTracker.currentSessionId } returns 5L
+            every { timeProvider.currentTime() } returns Instant.fromEpochMilliseconds(1000)
+            val savedLocation = slot<LocationEntity>()
+            coEvery { treeTrackerDAO.insertLocationData(capture(savedLocation)) } returns 1L
+            val locationsLiveData = startCapturing()
+
+            locationDataCapturer.converge()
+
+            assertFalse(locationDataCapturer.isConvergenceWithinRange())
+            locationsLiveData.postValue(mockk<Location>(relaxed = true))
+            awaitCaptured(savedLocation)
+            val saved = Json.decodeFromString(LocationData.serializer(), savedLocation.captured.locationDataJson)
+            assertEquals(ConvergenceStatus.TIMED_OUT, saved.convergenceStatus)
+        }
 }

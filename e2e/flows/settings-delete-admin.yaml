@@ -1,0 +1,30 @@
+# E8: delete the admin. Confirming shows "Account Deleted" and closing it goes to Signup. After a
+# relaunch there is no admin, so the app starts over on the language picker, as on a fresh install.
+appId: org.greenstand.android.TreeTracker.debug
+name: E8 Delete admin
+tags: [settings]
+---
+- launchApp: {clearState: true}
+- runFlow:
+    file: subflows/signup.yaml
+    env: {CREDENTIAL: Phone, IDENTIFIER: "5551230001", FIRST_NAME: Ada, LAST_NAME: Admin}
+- tapOn: {id: SettingsButton}
+- tapOn: {id: SettingsDeleteAccount}
+- tapOn: {id: "UserButton_5551230001"}
+- tapOn: {id: ArrowForwardButton}
+- assertVisible: {id: DialogUserButton}
+- tapOn: {id: DialogPositiveButton}
+- extendedWaitUntil:
+    visible: {id: DialogTitle, text: "Account Deleted"}
+    timeout: 10000
+- tapOn: {id: DialogPositiveButton}
+- extendedWaitUntil:
+    visible: {id: PrivacyPolicyCloseButton}
+    timeout: 10000
+# The deletion is saved: it survives a relaunch.
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible: {id: LanguageOption_ENGLISH}
+    timeout: 30000
+- assertNotVisible: {id: TrackButton}

@@ -15,6 +15,7 @@
  */
 package org.greenstand.android.TreeTracker.sessionnote
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -41,28 +42,44 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import org.greenstand.android.TreeTracker.R
 import org.greenstand.android.TreeTracker.models.setupflow.CaptureSetupScopeManager
+import org.greenstand.android.TreeTracker.models.setupflow.LeaveLostSetupEffect
 import org.greenstand.android.TreeTracker.navigation.LocalNavigator
+import org.greenstand.android.TreeTracker.navigation.rememberDoubleTapGuard
 import org.greenstand.android.TreeTracker.root.LocalViewModelFactory
 import org.greenstand.android.TreeTracker.view.ActionBar
 import org.greenstand.android.TreeTracker.view.ArrowButton
 import org.greenstand.android.TreeTracker.view.BorderedTextField
+import org.greenstand.android.TreeTracker.view.TestTags
 
 @Composable
 fun SessionNoteScreen(viewModel: SessionNoteViewModel = viewModel(factory = LocalViewModelFactory.current)) {
     val navigator = LocalNavigator.current
     val state by viewModel.state.collectAsState()
     val scope = rememberCoroutineScope()
+    val doubleTapGuard = rememberDoubleTapGuard()
 
-    SessionNote(
-        state = state,
-        onHandleAction = { action ->
-            when (action) {
-                is SessionNoteAction.NavigateBack -> CaptureSetupScopeManager.nav.navBackward(navigator)
-                is SessionNoteAction.NavigateNext -> scope.launch { CaptureSetupScopeManager.nav.navForward(navigator) }
-                else -> viewModel.handleAction(action)
-            }
-        },
-    )
+    LeaveLostSetupEffect(state.setupLost)
+
+    Box(doubleTapGuard.modifier) {
+        SessionNote(
+            state = state,
+            onHandleAction = { action ->
+                // Until a restored session note has its user back, leaving it would continue setup without one.
+                val canLeave = !state.restoring && !state.setupLost
+                when (action) {
+                    is SessionNoteAction.NavigateBack -> if (canLeave) CaptureSetupScopeManager.nav.navBackward(navigator)
+                    is SessionNoteAction.NavigateNext -> {
+                        // Next sits where the previous setup screen's Next was, so the second tap of a
+                        // double tap there lands here and would skip the note (#1442). Drop it.
+                        if (canLeave && !doubleTapGuard.isSecondTapOfDoubleTap(navigator)) {
+                            scope.launch { CaptureSetupScopeManager.nav.navForward(navigator) }
+                        }
+                    }
+                    else -> viewModel.handleAction(action)
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -95,6 +112,7 @@ fun SessionNote(
         ) {
             Spacer(modifier = Modifier.height(120.dp))
             BorderedTextField(
+                testTag = TestTags.SESSION_NOTE_FIELD,
                 value = state.note,
                 padding = PaddingValues(4.dp),
                 onValueChange = { updatedNote -> onHandleAction(SessionNoteAction.UpdateNote(updatedNote)) },

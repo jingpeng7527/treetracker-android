@@ -47,6 +47,7 @@ import org.greenstand.android.TreeTracker.models.DeviceOrientation
 import org.greenstand.android.TreeTracker.models.FeatureFlags
 import org.greenstand.android.TreeTracker.models.LanguageSwitcher
 import org.greenstand.android.TreeTracker.models.PlanterUploader
+import org.greenstand.android.TreeTracker.models.PendingTreeStore
 import org.greenstand.android.TreeTracker.models.SessionTracker
 import org.greenstand.android.TreeTracker.models.SessionUploader
 import org.greenstand.android.TreeTracker.models.StepCounter
@@ -61,12 +62,18 @@ import org.greenstand.android.TreeTracker.models.location.LocationDataCapturer
 import org.greenstand.android.TreeTracker.models.location.LocationUpdateManager
 import org.greenstand.android.TreeTracker.models.messages.MessageUploader
 import org.greenstand.android.TreeTracker.models.messages.MessagesRepo
+import org.greenstand.android.TreeTracker.models.organization.InstallReferrerDataSource
+import org.greenstand.android.TreeTracker.models.organization.InstallReferrerOrgProvider
 import org.greenstand.android.TreeTracker.models.organization.OrgConfigProvider
+import org.greenstand.android.TreeTracker.models.organization.PlayInstallReferrerDataSource
+import org.greenstand.android.TreeTracker.models.organization.OrgOverrideStore
 import org.greenstand.android.TreeTracker.models.organization.OrgRepo
 import org.greenstand.android.TreeTracker.models.setupflow.CaptureSetupData
+import org.greenstand.android.TreeTracker.models.setupflow.CaptureSetupRestorer
 import org.greenstand.android.TreeTracker.models.setupflow.CaptureSetupScope
 import org.greenstand.android.TreeTracker.navigation.CaptureFlowNavigationController
 import org.greenstand.android.TreeTracker.navigation.CaptureSetupNavigationController
+import org.greenstand.android.TreeTracker.navigation.RouteRegistry
 import org.greenstand.android.TreeTracker.orgpicker.AddOrgViewModel
 import org.greenstand.android.TreeTracker.orgpicker.OrgPickerViewModel
 import org.greenstand.android.TreeTracker.overlay.DebugOverlayManager
@@ -100,11 +107,11 @@ import org.koin.dsl.module
 val appModule =
     module {
 
-        viewModel { SessionNoteViewModel() }
+        viewModel { SessionNoteViewModel(get()) }
 
-        viewModel { AddWalletViewModel() }
+        viewModel { AddWalletViewModel(get()) }
 
-        viewModel { AddOrgViewModel(get(), get()) }
+        viewModel { AddOrgViewModel(get(), get(), get()) }
 
         viewModel { LanguagePickerViewModel(get()) }
 
@@ -114,16 +121,20 @@ val appModule =
 
         viewModel { UserSelectViewModel(null, get(), get(), get(), get()) }
 
-        viewModel { DevOptionsViewModel(get(), get()) }
+        viewModel { DevOptionsViewModel(get(), get(), get(), get()) }
 
-        viewModel { TreeHeightSelectionViewModel(get()) }
+        viewModel {
+            // After process death Nav3 restores tree height without the in-memory capture scope.
+            val restored = CaptureFlowScopeManager.restoreAt(RouteRegistry.ROUTE_TREE_HEIGHT)
+            TreeHeightSelectionViewModel(get(), restoredAfterProcessDeath = restored)
+        }
 
         viewModel {
             org.greenstand.android.TreeTracker.signup
                 .SignupViewModel(get(), get())
         }
 
-        viewModel { WalletSelectViewModel(get()) }
+        viewModel { WalletSelectViewModel(get(), get()) }
 
         viewModel { IndividualMessageListViewModel(get(), get(), get()) }
 
@@ -131,9 +142,13 @@ val appModule =
 
         viewModel { AnnouncementViewModel(get(), get()) }
 
-        viewModel { TreeImageReviewViewModel(get(), get(), get()) }
+        viewModel {
+            // After process death Nav3 restores image review without the in-memory capture scope.
+            val restored = CaptureFlowScopeManager.restoreAt(RouteRegistry.ROUTE_TREE_IMAGE_REVIEW)
+            TreeImageReviewViewModel(get(), get(), get(), restoredAfterProcessDeath = restored)
+        }
 
-        viewModel { PermissionViewModel(get()) }
+        viewModel { PermissionViewModel(get(), get()) }
 
         viewModel { SettingsViewModel(get()) }
 
@@ -141,13 +156,21 @@ val appModule =
 
         single { UserRepo(get(), get(), get(), get(), get(), get()) }
 
+        factory { PendingTreeStore(get()) }
+
         factory<TreeCapturer> { CaptureFlowScopeManager.getData().get() }
 
         single { Configurator(get()) }
 
         single { DeviceConfigUpdater(get(), get()) }
 
-        single { OrgRepo(get(), get(), get()) }
+        single { OrgOverrideStore(get(), get()) }
+
+        single { OrgRepo(get(), get(), get(), get()) }
+
+        single<InstallReferrerDataSource> { PlayInstallReferrerDataSource(androidContext()) }
+
+        single { InstallReferrerOrgProvider(get(), get()) }
 
         single {
             org.greenstand.android.TreeTracker.models.organization
@@ -263,6 +286,8 @@ val appModule =
 
         single { OrgConfigProvider(get()) }
 
+        factory { CaptureSetupRestorer(get(), get()) }
+
         scope<CaptureSetupScope> {
             scoped { CaptureSetupData(get()) }
             scoped { CaptureSetupNavigationController(get(), get(), get(), get(), get()) }
@@ -271,6 +296,6 @@ val appModule =
         scope<CaptureFlowScope> {
             scoped { CaptureFlowData() }
             scoped { CaptureFlowNavigationController(get(), get(), get(), get(), get(), get()) }
-            scoped { TreeCapturer(get(), get(), get(), get(), get()) }
+            scoped { TreeCapturer(get(), get(), get(), get(), get(), get()) }
         }
     }

@@ -1,6 +1,5 @@
 plugins {
     id 'com.android.application'
-    id 'kotlin-android'
     id 'kotlin-parcelize'
     id 'com.google.devtools.ksp'
     id 'org.jetbrains.kotlin.plugin.compose'
@@ -25,7 +24,10 @@ android {
         applicationId "org.greenstand.android.TreeTracker"
         minSdk libs.versions.minSdk.get().toInteger()
         targetSdk libs.versions.targetSdk.get().toInteger()
-        versionCode 197
+        // Release builds use baseVersionCode as is. Other CI builds add the workflow's run number
+        // (see .github/workflows/actions/build-apk), without committing anything.
+        def baseVersionCode = 197
+        versionCode = baseVersionCode + providers.gradleProperty("treetracker.versionCodeOffset").map { it.toInteger() }.getOrElse(0)
         versionName "2.2.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         multiDexEnabled true
@@ -53,10 +55,7 @@ android {
         viewBinding true
 
         buildConfig = true
-    }
-
-    kotlinOptions {
-        jvmTarget = "11" //"1.8"
+        resValues = true
     }
 
     compileOptions {
@@ -80,7 +79,7 @@ android {
             buildConfigField 'String', 'API_GATEWAY', '"https://prod-k8s.treetracker.org"'
             buildConfigField "String", "TREETRACKER_CLIENT_ID", "\"${prod_treetracker_client_id}\""
             buildConfigField "String", "TREETRACKER_CLIENT_SECRET", "\"${prod_treetracker_client_secret}\""
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
 
 
@@ -142,6 +141,15 @@ android {
         }
     }
 
+    // The agent AppFunctions live in src/debug so release, beta and prerelease never ship them.
+    // dev is also a local development build, so it compiles the same sources.
+    sourceSets {
+        dev {
+            kotlin.directories.add('src/debug/java')
+            manifest.srcFile 'src/debug/AndroidManifest.xml'
+        }
+    }
+
     packagingOptions {
         exclude 'META-INF/DEPENDENCIES'
         exclude 'META-INF/LICENSE'
@@ -161,12 +169,12 @@ android {
     }
     namespace 'org.greenstand.android.TreeTracker'
 
-    // includeAndroidResources is only needed for screenshot tests (Compose theme loads
-    // fonts from R.font.*). Enabling it globally causes Robolectric to fully initialize
-    // TreeTrackerApplication, which starts Koin and breaks existing unit tests.
+    // Screenshot and Compose UI tests need app resources (strings, drawables, R.font.*).
+    // src/test/resources/robolectric.properties keeps Robolectric on a plain Application,
+    // so TreeTrackerApplication (and Koin) never starts in unit tests.
     testOptions {
         unitTests {
-            includeAndroidResources = gradle.startParameter.taskNames.any { it.toLowerCase().contains('roborazzi') }
+            includeAndroidResources = true
         }
     }
 }
@@ -175,12 +183,23 @@ android {
 // - `./gradlew test` runs only regular unit tests (excludes screenshot/)
 // - `./gradlew verifyRoborazziDebug` runs only screenshot tests (includes screenshot/ only)
 // This prevents Koin DI conflicts between the two test suites.
+// Compose UI tests (uitest/) run only in testDebugUnitTest: the activity they launch is
+// declared by ui-test-manifest, which is a debug-only dependency.
 def isRoborazziRun = gradle.startParameter.taskNames.any { it.toLowerCase().contains('roborazzi') }
 tasks.withType(Test).configureEach {
+    // Robolectric + Compose UI tests need more than the 512 MB default heap. A fresh JVM every
+    // 100 test classes keeps leaked Robolectric state bounded, and the timeout fails a stuck
+    // test JVM instead of letting CI hang until the job is cancelled.
+    maxHeapSize = "3g"
+    forkEvery = 100
+    timeout.set(java.time.Duration.ofMinutes(60))
     if (isRoborazziRun) {
         include '**/screenshot/**'
     } else {
         exclude '**/screenshot/**'
+        if (name != 'testDebugUnitTest') {
+            exclude '**/uitest/**'
+        }
     }
 }
 
@@ -216,9 +235,9 @@ ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
 }
 
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-    kotlinOptions {
-        jvmTarget = "11" //"1.8"
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11
     }
 }
 
@@ -285,6 +304,15 @@ dependencies {
     implementation libs.firebase.crashlytics.ktx
     implementation libs.firebase.installations
     implementation libs.firebase.config
+
+    // AppFunctions: debug and dev only, see docs/testing/agent-app-functions.md
+    debugImplementation libs.androidx.appfunctions
+    devImplementation libs.androidx.appfunctions
+    kspDebug libs.androidx.appfunctions.compiler
+    kspDev libs.androidx.appfunctions.compiler
+
+    // Play Install Referrer
+    implementation libs.install.referrer
 
     // Testing
     testImplementation libs.bundles.testing

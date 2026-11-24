@@ -1,0 +1,31 @@
+# H8: double taps into capture setup push one screen each: Track -> user select, and
+# Next on user select -> Add org. Add org's back arrow then returns to user select, and no
+# capture screen was opened behind it.
+#
+# On small screens (320x640, as on CI) the next screen's button sits where the tapped one was:
+# user select's add-user where Track was, Add org's Next where user select's Next was.
+# navigation/DoubleTapGuard.kt drops a press there that went down within the double-tap timeout
+# of the navigation, and CaptureSetupNavigationController.navForward drops a repeat call from
+# the same screen, so neither second tap opens signup or capture (#1423).
+appId: org.greenstand.android.TreeTracker.debug
+name: H8 Double tap into capture setup
+tags: [sad-path]
+---
+- launchApp: {clearState: true}
+- runFlow:
+    file: subflows/signup.yaml
+    env: {CREDENTIAL: Phone, IDENTIFIER: "5551230001", FIRST_NAME: Ada, LAST_NAME: Admin}
+# Track
+- doubleTapOn: {id: TrackButton}
+- assertVisible: {id: "UserButton_5551230001"}
+- back
+- assertVisible: {id: TrackButton}
+# Next on user select
+- tapOn: {id: TrackButton}
+- tapOn: {id: "UserButton_5551230001"}
+- doubleTapOn: {id: ArrowForwardButton}
+- assertVisible: {id: OrgNameField}
+# Add org's own back arrow returns to user select when only Add org was pushed.
+- tapOn: {id: ArrowBackButton}
+- assertVisible: {id: "UserButton_5551230001"}
+- assertNotVisible: {id: CaptureButton}

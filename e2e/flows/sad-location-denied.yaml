@@ -1,0 +1,26 @@
+# H1: location denied at first launch. A fresh install asks for its permissions on the splash
+# screen; the user allows everything but location. The app still leaves the splash screen (it goes
+# on to language select); the capture screen asks for location again when it is needed. (#1417)
+appId: org.greenstand.android.TreeTracker.debug
+name: H1 Location denied at first launch
+tags: [sad-path]
+---
+- launchApp:
+    clearState: true
+    permissions: {camera: allow, notifications: allow, location: deny}
+# Location is left unanswered, so Android asks for it: deny it in the system dialog.
+- extendedWaitUntil:
+    visible: {id: permission_deny_button}
+    timeout: 15000
+- tapOn: {id: permission_deny_button}
+# Physical activity is asked for next; allow it.
+- runFlow:
+    when: {visible: {id: permission_allow_button}}
+    commands:
+      - tapOn: {id: permission_allow_button}
+# The app must land on language select. Waiting only for the splash to go also passes when the
+# app closes or crashes after the denial, so wait for the screen it should show. (task_110)
+- extendedWaitUntil:
+    visible: {id: LanguageOption_ENGLISH}
+    timeout: 30000
+- assertNotVisible: {id: SplashScreen}
